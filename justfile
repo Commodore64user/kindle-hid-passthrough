@@ -307,8 +307,13 @@ version-bump version:
         echo "ERROR: failed to update version in config.py" >&2
         exit 1
     fi
+    sed -i -E "s/^    version = \".*\",/    version = \"$version\",/" koreader-plugin/hidpassthrough.koplugin/_meta.lua
+    if ! grep -q "^    version = \"$version\",$" koreader-plugin/hidpassthrough.koplugin/_meta.lua; then
+        echo "ERROR: failed to update version in _meta.lua" >&2
+        exit 1
+    fi
     python3 scripts/gen_kpm_manifests.py
-    git add kindle_hid_passthrough/config.py kpm/repo.json
+    git add kindle_hid_passthrough/config.py koreader-plugin/hidpassthrough.koplugin/_meta.lua kpm/repo.json
     git commit -s -m "chore: bump version to $version"
     git tag "v$version"
     git push origin main
