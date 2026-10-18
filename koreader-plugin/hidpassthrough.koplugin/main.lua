@@ -704,13 +704,17 @@ local FAVORITE_ACTIONS = {
     { kind = "auto",     id = "brightness 1" },
     { kind = "auto",     id = "brightness -1" },
     { kind = "auto",     id = "brightness_toggle" },
-    { kind = "koreader", id = "warmth 1", natural_light = true },
-    { kind = "koreader", id = "warmth -1", natural_light = true },
+    { kind = "koreader", id = "warmth 1" },
+    { kind = "koreader", id = "warmth -1" },
     { kind = "koreader", id = "font_up 1" },
     { kind = "koreader", id = "font_down 1" },
     { kind = "koreader", id = "toggle_status_bar" },
     { kind = "koreader", id = "rotate" },
 }
+
+local function supportedHere(a)
+    return not a.id:match("^warmth ") or Device:hasNaturalLight()
+end
 
 function HIDPassthrough:_actionSections()
     if not self._action_sections then
@@ -725,7 +729,7 @@ function HIDPassthrough:_actionSections()
             local items = {}
             for dummy, fav in ipairs(FAVORITE_ACTIONS) do -- luacheck: ignore dummy
                 local a = by_key[fav.kind .. "\0" .. fav.id]
-                if a and (not fav.natural_light or Device:hasNaturalLight()) then
+                if a and supportedHere(a) then
                     table.insert(items, {
                         title = a.label,
                         script = self:_mapper().actionScript(a),
@@ -757,8 +761,8 @@ function HIDPassthrough:_actionSections()
         -- Split by what the script actually drives rather than lumping both
         -- under one "native" heading: auto.* try KOReader first and fall back
         -- to the Kindle reader, kindle.* only ever drive the Kindle reader.
-        -- The koreader.* ones duplicate the KOReader list above.
         local NATIVE_GROUPS = {
+            { kind = "koreader", title = _("KOReader adjustments"), stepped = true },
             { kind = "auto",   title = _("Works outside KOReader too") },
             { kind = "kindle", title = _("Native Kindle reader") },
         }
@@ -766,7 +770,8 @@ function HIDPassthrough:_actionSections()
             for dummy, group in ipairs(NATIVE_GROUPS) do -- luacheck: ignore dummy
                 local items = {}
                 for dummy2, a in ipairs(native) do -- luacheck: ignore dummy2
-                    if a.kind == group.kind then
+                    if a.kind == group.kind and supportedHere(a)
+                            and (not group.stepped or a.id:find(" ")) then
                         table.insert(items, {
                             title = a.label,
                             script = self:_mapper().actionScript(a),
