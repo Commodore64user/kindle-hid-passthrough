@@ -354,11 +354,16 @@ function HIDPassthrough:_mapper()
     return self._mapper_client
 end
 
+-- Loaded once for the process, not per instance: each instance loading its
+-- own copy gave each its own server, and the reader's could not bind while
+-- the file browser's held the port, then the file browser closed its own.
+local event_server
+
 function HIDPassthrough:_eventServer()
-    if not self._event_server then
-        self._event_server = dofile(self.path .. "/eventserver.lua")
+    if not event_server then
+        event_server = dofile(self.path .. "/eventserver.lua")
     end
-    return self._event_server
+    return event_server
 end
 
 function HIDPassthrough:_syncEventServer()
@@ -368,7 +373,7 @@ function HIDPassthrough:_syncEventServer()
     if text:find("koreader.sh", 1, true)
         or text:find("auto.sh", 1, true)
         or text:find("keyboard_layout", 1, true) then
-        self:_eventServer().start()
+        self:_eventServer().start(self)
     else
         self:_eventServer().stop()
     end
@@ -1741,7 +1746,7 @@ end
 function HIDPassthrough:onCloseWidget()
     self:_cancelPolls()
     self:_stopBatteryPoll()
-    self:_eventServer().stop()
+    self:_eventServer().stop(self)
 end
 
 function HIDPassthrough:onResume()
