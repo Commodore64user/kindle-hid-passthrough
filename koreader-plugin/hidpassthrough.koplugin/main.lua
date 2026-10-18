@@ -704,6 +704,8 @@ local FAVORITE_ACTIONS = {
     { kind = "auto",     id = "brightness 1" },
     { kind = "auto",     id = "brightness -1" },
     { kind = "auto",     id = "brightness_toggle" },
+    { kind = "koreader", id = "warmth 1", natural_light = true },
+    { kind = "koreader", id = "warmth -1", natural_light = true },
     { kind = "koreader", id = "font_up 1" },
     { kind = "koreader", id = "font_down 1" },
     { kind = "koreader", id = "toggle_status_bar" },
@@ -723,7 +725,7 @@ function HIDPassthrough:_actionSections()
             local items = {}
             for dummy, fav in ipairs(FAVORITE_ACTIONS) do -- luacheck: ignore dummy
                 local a = by_key[fav.kind .. "\0" .. fav.id]
-                if a then
+                if a and (not fav.natural_light or Device:hasNaturalLight()) then
                     table.insert(items, {
                         title = a.label,
                         script = self:_mapper().actionScript(a),
