@@ -286,14 +286,7 @@ local function describeInput(path)
     return name, #types > 0 and table.concat(types, ",") or "unknown"
 end
 
-function HIDPassthrough:showInputDiagnostics()
-    local lines = {
-        T(_("Extra event map: %1"), self._event_map_status or _("not loaded")),
-        T(_("Plugin directory: %1"), tostring(self.path)),
-        "",
-        _("Input devices:"),
-    }
-
+local function inputLines(sep)
     local paths = {}
     for name in lfs.dir("/dev/input") do
         if name:match("^event%d+$") then
@@ -302,6 +295,7 @@ function HIDPassthrough:showInputDiagnostics()
     end
     table.sort(paths)
 
+    local lines = {}
     for dummy, path in ipairs(paths) do -- luacheck: ignore dummy
         local name, types = describeInput(path)
         local owner
@@ -312,9 +306,20 @@ function HIDPassthrough:showInputDiagnostics()
         else
             owner = _("NOT OPEN - keys are ignored")
         end
-        table.insert(lines, T("%1  %2\n    [%3]  %4",
-            path, name or "?", types or "?", owner))
+        table.insert(lines, T("%1  %2%3[%4]  %5",
+            path, name or "?", sep, types or "?", owner))
     end
+    return lines
+end
+
+function HIDPassthrough:showInputDiagnostics()
+    local lines = {
+        T(_("Extra event map: %1"), self._event_map_status or _("not loaded")),
+        T(_("Plugin directory: %1"), tostring(self.path)),
+        "",
+        _("Input devices:"),
+    }
+    util.arrayAppend(lines, inputLines("\n    "))
 
     UIManager:show(TextViewer:new{
         title = _("Input diagnostics"),
@@ -326,10 +331,12 @@ end
 -- An insert is always a new device, so force the re-open. One second, not
 -- externalkeyboard's half, so a real keyboard reaches it first.
 function HIDPassthrough:onEvdevInputInsert(path)
+    logger.info("HIDPassthrough: input added", path, describeInput(path))
     UIManager:scheduleIn(1, function() self:_attachInput(path, true) end)
 end
 
 function HIDPassthrough:onEvdevInputRemove(path)
+    logger.info("HIDPassthrough: input removed", path)
     UIManager:scheduleIn(1, function() self:_detachInput(path) end)
 end
 
@@ -709,11 +716,17 @@ local FAVORITE_ACTIONS = {
     { kind = "auto",     id = "brightness 1" },
     { kind = "auto",     id = "brightness -1" },
     { kind = "auto",     id = "brightness_toggle" },
+    { kind = "koreader", id = "warmth 1" },
+    { kind = "koreader", id = "warmth -1" },
     { kind = "koreader", id = "font_up 1" },
     { kind = "koreader", id = "font_down 1" },
     { kind = "koreader", id = "toggle_status_bar" },
     { kind = "koreader", id = "rotate" },
 }
+
+local function supportedHere(a)
+    return not a.id:match("^warmth ") or Device:hasNaturalLight()
+end
 
 function HIDPassthrough:_actionSections()
     if not self._action_sections then
@@ -728,7 +741,7 @@ function HIDPassthrough:_actionSections()
             local items = {}
             for dummy, fav in ipairs(FAVORITE_ACTIONS) do -- luacheck: ignore dummy
                 local a = by_key[fav.kind .. "\0" .. fav.id]
-                if a then
+                if a and supportedHere(a) then
                     table.insert(items, {
                         title = a.label,
                         script = self:_mapper().actionScript(a),
@@ -760,8 +773,8 @@ function HIDPassthrough:_actionSections()
         -- Split by what the script actually drives rather than lumping both
         -- under one "native" heading: auto.* try KOReader first and fall back
         -- to the Kindle reader, kindle.* only ever drive the Kindle reader.
-        -- The koreader.* ones duplicate the KOReader list above.
         local NATIVE_GROUPS = {
+            { kind = "koreader", title = _("KOReader adjustments"), stepped = true },
             { kind = "auto",   title = _("Works outside KOReader too") },
             { kind = "kindle", title = _("Native Kindle reader") },
         }
@@ -769,7 +782,8 @@ function HIDPassthrough:_actionSections()
             for dummy, group in ipairs(NATIVE_GROUPS) do -- luacheck: ignore dummy
                 local items = {}
                 for dummy2, a in ipairs(native) do -- luacheck: ignore dummy2
-                    if a.kind == group.kind then
+                    if a.kind == group.kind and supportedHere(a)
+                            and (not group.stepped or a.id:find(" ")) then
                         table.insert(items, {
                             title = a.label,
                             script = self:_mapper().actionScript(a),
@@ -1689,6 +1703,30 @@ function HIDPassthrough:onInputEvent()
     PowerD:resetT1Timeout()
 end
 
+local versions_logged = false
+
+function HIDPassthrough:_logVersions()
+    if versions_logged then return end
+    versions_logged = true
+
+    local state, body = self:getState()
+    local sha = util.readFromFile(self.DAEMON_BINARY:match("^(.*)/") .. "/BUILD_SHA")
+    local mapper = self:_mapper()
+    local mapper_version = "not installed"
+    if mapper.installed() then
+        local p = io.popen(mapper.BIN .. " --version 2>&1")
+        mapper_version = p and p:read("*l") or "?"
+        if p then p:close() end
+    end
+    logger.info("HIDPassthrough: plugin", self.version,
+        "| daemon", state, body and extractField(body, "version") or "",
+        "| BUILD_SHA", sha and util.trim(sha) or "none",
+        "| mapper", mapper_version)
+    for dummy, line in ipairs(inputLines("  ")) do -- luacheck: ignore dummy
+        logger.info("HIDPassthrough: input", line)
+    end
+end
+
 function HIDPassthrough:init()
     self:onDispatcherRegisterActions()
     self.ui.menu:registerToMainMenu(self)
@@ -1702,6 +1740,7 @@ function HIDPassthrough:init()
     self:_scanInputs()
     self:_startBatteryPoll()
     self:_syncEventServer()
+    UIManager:nextTick(function() self:_logVersions() end)
 end
 
 function HIDPassthrough:onCloseWidget()
