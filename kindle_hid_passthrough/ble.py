@@ -21,7 +21,9 @@ from bumble.gatt import (
 )
 from bumble.hci import (
     Address,
+    HCI_COMMAND_DISALLOWED_ERROR,
     HCI_Constant,
+    HCI_Error,
     HCI_LE_Add_Device_To_Filter_Accept_List_Command,
     HCI_LE_Clear_Filter_Accept_List_Command,
     HCI_LE_Connection_Update_Command,
@@ -53,6 +55,8 @@ class BLEMixin:
     BLE_INIT_WINDOW = 18.0
     BLE_SCAN_WINDOW = 8.0
     BLE_PARAM_UPDATE_TIMEOUT = 45.0
+    BLE_SCAN_START_RETRIES = 3
+    BLE_SCAN_START_RETRY_DELAY = 0.5
 
     async def _run_ble_handler(self):
         """Handle BLE connections."""
@@ -336,11 +340,21 @@ class BLEMixin:
         self.device.on('advertisement', on_advertisement)
         scanning = False
         try:
-            await self.device.start_scanning(
-                legacy=True,
-                own_address_type=OwnAddressType.PUBLIC,
-                filter_duplicates=True,
-            )
+            for attempt in range(self.BLE_SCAN_START_RETRIES + 1):
+                try:
+                    await self.device.start_scanning(
+                        legacy=True,
+                        own_address_type=OwnAddressType.PUBLIC,
+                        filter_duplicates=True,
+                    )
+                    break
+                except HCI_Error as e:
+                    # Some controllers (BCM on the PW5) are still leaving the
+                    # initiating state after the create-connection cancel.
+                    if (e.error_code != HCI_COMMAND_DISALLOWED_ERROR
+                            or attempt == self.BLE_SCAN_START_RETRIES):
+                        raise
+                    await asyncio.sleep(self.BLE_SCAN_START_RETRY_DELAY)
             scanning = True
             try:
                 return await asyncio.wait_for(rotated, timeout=window)
