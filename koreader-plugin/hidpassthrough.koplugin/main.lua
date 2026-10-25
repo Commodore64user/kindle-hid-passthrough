@@ -39,6 +39,7 @@ local HIDPassthrough = InputContainer:extend{
     name = "hidpassthrough",
     is_doc_only = false,
     footer_symbol = "\u{F293}", -- bt logo, part of NerdFonts
+    footer_symbol_idle = "\u{E7B1}", -- crossed out bt logo, same font
 
     -- Override in settings/hidpassthrough.lua if your install differs.
     DAEMON_BINARY = "/mnt/us/kindle_hid_passthrough/kindle-hid-passthrough",
@@ -333,12 +334,18 @@ end
 -- externalkeyboard's half, so a real keyboard reaches it first.
 function HIDPassthrough:onEvdevInputInsert(path)
     logger.info("HIDPassthrough: input added", path, describeInput(path))
-    UIManager:scheduleIn(1, function() self:_attachInput(path, true) end)
+    UIManager:scheduleIn(1, function()
+        self:_attachInput(path, true)
+        self:_updateFooter()
+    end)
 end
 
 function HIDPassthrough:onEvdevInputRemove(path)
     logger.info("HIDPassthrough: input removed", path)
-    UIManager:scheduleIn(1, function() self:_detachInput(path) end)
+    UIManager:scheduleIn(1, function()
+        self:_detachInput(path)
+        self:_updateFooter()
+    end)
 end
 
 ------------------------------------------------------------------------------
@@ -1874,19 +1881,21 @@ function HIDPassthrough:_doToggle(touchmenu_instance)
     end
 end
 
--- Battery level when a device reports one, the BT symbol
--- while the daemon is up, otherwise nothing.
+-- Battery level when a device reports one, the BT symbol while a device
+-- is connected, the crossed out one while the daemon is up, otherwise nothing.
 function HIDPassthrough:_statusText()
-    if not self:isRunning() then return end
-    if self._battery then
+    local state, body = self:getState()
+    if state ~= "on" then return end
+    local idle = body:find('"connections"%s*:%s*%[%s*%]') ~= nil
+    if self._battery and not idle then
         return self:_batteryText()
     end
     local footer = self.ui.view and self.ui.view.footer
     local prefix = footer and footer.settings and footer.settings.item_prefix
     if prefix == "letters" then
-        return T(_("%1 on"), "ʙᴛ") -- small caps
+        return T(idle and _("%1 idle") or _("%1 on"), "ʙᴛ") -- small caps
     end
-    return self.footer_symbol
+    return idle and self.footer_symbol_idle or self.footer_symbol
 end
 
 function HIDPassthrough:_updateFooter()
