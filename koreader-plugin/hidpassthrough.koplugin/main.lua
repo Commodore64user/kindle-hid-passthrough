@@ -38,6 +38,7 @@ pcall(require, "ffi/fbink_input_h")
 local HIDPassthrough = InputContainer:extend{
     name = "hidpassthrough",
     is_doc_only = false,
+    footer_symbol = "\u{F293}", -- bt logo, part of NerdFonts
 
     -- Override in settings/hidpassthrough.lua if your install differs.
     DAEMON_BINARY = "/mnt/us/kindle_hid_passthrough/kindle-hid-passthrough",
@@ -974,13 +975,19 @@ end
 
 function HIDPassthrough:start()
     local ok, msg = self:_startDaemon()
-    if ok then self:_mapper().setRunning(true) end
+    if ok then
+        self:_mapper().setRunning(true)
+        self:_updateFooter()
+    end
     return ok, msg
 end
 
 function HIDPassthrough:stop()
     local ok, msg = self:_stopDaemon()
-    if ok then self:_mapper().setRunning(false) end
+    if ok then
+        self:_mapper().setRunning(false)
+        self:_updateFooter()
+    end
     return ok, msg
 end
 
@@ -1728,6 +1735,13 @@ function HIDPassthrough:_logVersions()
 end
 
 function HIDPassthrough:init()
+    self.show_in_footer = G_reader_settings:isTrue("HIDPassthrough_show_in_footer")
+    self._status_content_func = function()
+        return self:_statusText()
+    end
+    if self.show_in_footer then
+        self:_addFooterSymbol()
+    end
     self:onDispatcherRegisterActions()
     self.ui.menu:registerToMainMenu(self)
     self:_extendEventMap()
@@ -1754,7 +1768,7 @@ function HIDPassthrough:onResume()
 end
 
 ------------------------------------------------------------------------------
--- Peripheral battery in the status bars
+-- Peripheral battery or HID status in the status bars
 ------------------------------------------------------------------------------
 
 -- One failed poll per KOReader run is enough to learn the daemon is down.
@@ -1793,24 +1807,16 @@ function HIDPassthrough:_batteryText()
     return self.BATTERY_LETTER .. ": " .. level .. "%"
 end
 
--- Registering flips the footer's "External content" item on, so only do it
--- once a device has actually reported a level.
+-- Registering a footer item flips the footer's "External content" item on, so
+-- the footer side is only touched via the status bar setting.
 function HIDPassthrough:_setBatteryShown(shown)
     if shown == self._battery_shown then return end
     self._battery_shown = shown
-    local footer = self.ui.view and self.ui.view.footer
-    if footer then
-        if shown then
-            footer:addAdditionalFooterContent(self._battery_content_func)
-        else
-            footer:removeAdditionalFooterContent(self._battery_content_func)
-        end
-    end
     if self.ui.crelistener then
         if shown then
-            self.ui.crelistener:addAdditionalHeaderContent(self._battery_content_func)
+            self.ui.crelistener:addAdditionalHeaderContent(self._status_content_func)
         else
-            self.ui.crelistener:removeAdditionalHeaderContent(self._battery_content_func)
+            self.ui.crelistener:removeAdditionalHeaderContent(self._status_content_func)
         end
     end
 end
@@ -1865,6 +1871,42 @@ function HIDPassthrough:_doToggle(touchmenu_instance)
     })
     if touchmenu_instance then
         touchmenu_instance:updateItems()
+    end
+end
+
+-- Battery level when a device reports one, the BT symbol
+-- while the daemon is up, otherwise nothing.
+function HIDPassthrough:_statusText()
+    if not self:isRunning() then return end
+    if self._battery then
+        return self:_batteryText()
+    end
+    local footer = self.ui.view and self.ui.view.footer
+    local prefix = footer and footer.settings and footer.settings.item_prefix
+    if prefix == "letters" then
+        return T(_("%1 on"), "ʙᴛ") -- small caps
+    end
+    return self.footer_symbol
+end
+
+function HIDPassthrough:_updateFooter()
+    if self.show_in_footer then
+        UIManager:broadcastEvent(Event:new("RefreshAdditionalContent"))
+    end
+end
+
+function HIDPassthrough:_addFooterSymbol()
+    if self.ui.view then
+        self.ui.view.footer:addAdditionalFooterContent(self._status_content_func)
+        self:_updateFooter()
+    end
+end
+
+function HIDPassthrough:_removeFooterSymbol()
+    if self.ui.view then
+        self.ui.view.footer:removeAdditionalFooterContent(self._status_content_func)
+        self:_updateFooter()
+        UIManager:broadcastEvent(Event:new("UpdateFooter", true))
     end
 end
 
@@ -1934,6 +1976,19 @@ function HIDPassthrough:addToMainMenu(menu_items)
                         callback = function() self:clearCache() end,
                     },
                 },
+            },
+            {
+                text = _("Show HID Passthrough daemon status in status bar"),
+                checked_func = function() return self.show_in_footer end,
+                callback = function()
+                    self.show_in_footer = not self.show_in_footer
+                    G_reader_settings:flipNilOrFalse("HIDPassthrough_show_in_footer")
+                    if self.show_in_footer then
+                        self:_addFooterSymbol()
+                    else
+                        self:_removeFooterSymbol()
+                    end
+                end,
             },
             {
                 text = _("About HID Passthrough"),
